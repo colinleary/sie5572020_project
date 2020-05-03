@@ -152,6 +152,26 @@ class InsertButtonCallback:
         if self.func(entries):
             self.window.destroy()
 
+class RemoveButtonCallback:
+    def __init__(self, conn, table_name, tree_view, refresh_func):
+        self.conn = conn
+        self.table_name = table_name
+        self.tree_view = tree_view
+        self.refresh_func = refresh_func
+
+    def __call__(self):
+        remove_sql = f'''
+            DELETE FROM {self.table_name} WHERE id=%s
+        '''
+
+        with self.conn.cursor() as cur:
+            for id in self.tree_view.selection():
+                cur.execute(remove_sql, id)
+
+        self.conn.commit()
+
+        self.refresh_func()
+
 class DbFrame(tk.Frame):
     def __init__(self, master, conn, table_name):
         self.master = master
@@ -181,6 +201,11 @@ class EntityFrame(DbFrame):
 
         self.tree_view = ttk.Treeview(self, columns=self.titles, show='headings')
 
+        self.remove = RemoveButtonCallback(self.conn,
+                                           self.table_name,
+                                           self.tree_view,
+                                           self.refresh)
+
         for col in self.titles:
             self.tree_view.heading(col, text=col)
 
@@ -207,19 +232,6 @@ class EntityFrame(DbFrame):
             res = cur.fetchall()
             for item in res:
                 self.tree_view.insert('', 'end', item[0], values=item[1:])
-
-    def remove(self):
-        remove_sql = f'''
-            DELETE FROM {self.table_name} WHERE id=%s
-        '''
-
-        with self.conn.cursor() as cur:
-            for id in self.tree_view.selection():
-                cur.execute(remove_sql, id)
-
-        self.conn.commit()
-
-        self.refresh()
 
     def push_add_window(self):
         win = tk.Toplevel()
@@ -304,23 +316,15 @@ class EnrollmentFrame(DbFrame):
                                columnspan=2,
                                sticky=tk.NSEW)
 
+        self.remove = RemoveButtonCallback(self.conn,
+                                           'enrollment_data',
+                                           self.tree_view,
+                                           self.refresh)
+
         delete_button = tk.Button(self, text='Delete', command=self.remove)
         delete_button.grid(row=2, column=0, sticky=tk.NSEW)
         add_button = tk.Button(self, text='Add New', command=self.push_add_window)
         add_button.grid(row=2, column=1, sticky=tk.NSEW)
-
-    def remove(self):
-        remove_sql = f'''
-            DELETE FROM enrollment_data WHERE id=%s
-        '''
-
-        with self.conn.cursor() as cur:
-            for id in self.tree_view.selection():
-                cur.execute(remove_sql, id)
-
-        self.conn.commit()
-
-        self.refresh()
 
     def push_add_window(self):
         win = tk.Toplevel()
@@ -449,7 +453,6 @@ class EnrollmentFrame(DbFrame):
             menu.add_command(label=term,
                              command=lambda value=term: self.term_var.set(value))
 
-
     def update_course_menu(self, *args):
         # Get course list for a given term
         with self.conn.cursor() as cur:
@@ -497,6 +500,7 @@ class App:
     def __init__(self, master):
         # Create connection
         self.master = master
+
         self.conn = pymysql.connect(host='localhost',
                                     user='python',
                                     db='sie5572020')
