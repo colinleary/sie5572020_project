@@ -5,6 +5,7 @@ import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk
 from tkinter import messagebox
+import tkcalendar as tkc
 
 import pymysql.cursors
 
@@ -24,18 +25,6 @@ tables = {
         'attrs': ['course_name', 'instructor_name'],
         'titles': ['Course Name', 'Instructor Name']
     },
-    'enrollment': {
-        'attrs': ['s_id', 's_name', 'c_id', 'c_name', 'term'],
-        'titles': ['Student', 'Course', 'Term']
-    },
-    'attendance': {
-        'attrs': ['enrollment_id', 'date'],
-        'titles': ['Enrollment', 'Date']
-    },
-    'grades': {
-        'attrs': ['assignment_id', 'enrollment_id', 'score'],
-        'titles': ['Assignment', 'Enrollment', 'Score']
-    }
 }
 
 def create_entity_tables(conn):
@@ -106,7 +95,8 @@ def create_relationship_tables(conn):
     create_attendance_table = '''
         CREATE TABLE IF NOT EXISTS attendance (
             enrollment_id INT UNSIGNED NOT NULL REFERENCES enrollment(id),
-            date DATE NOT NULL
+            date DATE NOT NULL,
+            CONSTRAINT UNIQUE (enrollment_id, date)
             )
         '''
 
@@ -488,6 +478,113 @@ class EnrollmentFrame(DbFrame):
         self.update_course_menu()
         self.update_student_list()
 
+# The attendance frame is almost identical to the enrollment frame
+class AttendanceFrame(EnrollmentFrame):
+    def __init__(self, master, conn):
+        super().__init__(master, conn)
+
+    def layout(self):
+        tk.Grid.rowconfigure(self, 1, weight=1)
+        for c in range(6):
+            tk.Grid.columnconfigure(self, c, weight=1)
+
+        # Create drop-down to select term
+        self.term_str.trace('w', self.update_course_menu)
+        self.term_menu = tk.OptionMenu(self, self.term_str, None)
+        self.term_menu.grid(column=0, row=0, columnspan=2)
+
+        # Create drop-down to select course
+        self.course_id.trace_add('write', self.update_student_list)
+        # self.course_str.trace('w', self.update_student_list)
+        self.course_menu = tk.OptionMenu(self, self.course_str, None)
+        self.course_menu.grid(column=2, row=0, columnspan=2)
+
+        # Create date-picker
+        self.date_picker = tkc.DateEntry(self)
+        self.date_picker.grid(column=5, row=0)
+        self.date = self.date_picker.get_date()
+        self.date_picker.bind('<<DateEntrySelected>>', self.update_date)
+
+        # Create tree view to show students enrolled
+        self.tree_view = ttk.Treeview(self, columns=['students', 'present'], show='headings')
+        self.tree_view.heading(0, text='Students')
+        self.tree_view.heading(1, text='Present')
+        self.tree_view.grid(column=0,
+                               row=1,
+                               columnspan=6,
+                               sticky=tk.NSEW)
+
+        not_present_button = tk.Button(self, text='Not Present', command=self.mark_not_present)
+        not_present_button.grid(row=2, column=0, columnspan=3, sticky=tk.NSEW)
+        present_button = tk.Button(self, text='Present', command=self.mark_present)
+        present_button.grid(row=2, column=3, columnspan=3, sticky=tk.NSEW)
+
+    def mark_not_present(self):
+        remove_attendance_sql = f'''DELETE FROM attendance
+            WHERE enrollment_id = %s
+            AND date = "{self.date}"'''
+
+        with self.conn.cursor() as cur:
+            for s in self.tree_view.selection():
+                cur.execute(remove_attendance_sql, s)
+
+        self.conn.commit()
+
+        self.refresh()
+
+    def mark_present(self):
+        add_attendance_sql = f'''INSERT INTO attendance
+            (enrollment_id, date) VALUES
+            (%s, "{self.date}")
+        '''
+
+        with self.conn.cursor() as cur:
+            for s in self.tree_view.selection():
+                try:
+                    cur.execute(add_attendance_sql, s)
+                except pymysql.IntegrityError:
+                    pass
+
+        self.conn.commit()
+
+        self.refresh()
+
+    def update_date(self, *args):
+        self.date = self.date_picker.get_date()
+        self.refresh()
+
+    def update_student_list(self, *args):
+        # Clear everything out of tree
+        self.tree_view.delete(*self.tree_view.get_children())
+
+        if self.course_str.get() == self.INVALID_COURSE_STR:
+            return
+
+        # Get attendance
+        with self.conn.cursor() as cur:
+            get_attendance = f'''SELECT enrollment_id FROM attendance
+                                WHERE date="{self.date}"'''
+
+            cur.execute(get_attendance)
+
+            present = [i[0] for i in cur.fetchall()]
+
+        # Get list of students
+        with self.conn.cursor() as cur:
+
+            get_students = f'''SELECT id,s_name FROM enrollment
+                                WHERE term="{self.term_str.get()}"
+                                AND c_id={self.course_id.get()}'''
+
+            cur.execute(get_students)
+
+            for student in cur.fetchall():
+                v = [f'{student[1]}']
+                if student[0] in present:
+                    v.append('X')
+
+                self.tree_view.insert('', 'end', student[0], values=v)
+
 class App:
     def __init__(self, master):
         # Create connection
@@ -525,6 +622,9 @@ class App:
 
         self.tabs = ttk.Notebook(self.master)
 
+        self.attentance_frame = AttendanceFrame(self.tabs, self.conn)
+        self.tabs.add(self.attentance_frame, text='Attendance')
+
         # Create Entity tabs
         self.student_frame = EntityFrame(self.tabs, self.conn, 'students')
         self.tabs.add(self.student_frame, text='Students')
@@ -538,6 +638,8 @@ class App:
         # Create Relationship tabs
         self.enrollment_frame = EnrollmentFrame(self.tabs, self.conn)
         self.tabs.add(self.enrollment_frame, text='Enrollment')
+
+
 
         self.tabs.pack(fill=tk.BOTH, expand=tk.TRUE)
 
