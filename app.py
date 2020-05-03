@@ -4,6 +4,7 @@ import warnings
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk
+from tkinter import messagebox
 
 import pymysql.cursors
 
@@ -127,19 +128,6 @@ def create_relationship_tables(conn):
 
     conn.commit()
 
-def create_tree_view(frame, cols):
-    view = ttk.Treeview(frame, columns=cols, show='headings')
-    for col in cols:
-        view.heading(col, text=col)
-
-    fname = ttk.Style().lookup('TreeView', 'font')
-    fontheight = tkf.Font(name=fname, exists=tk.TRUE).metrics('linespace')
-
-    style = ttk.Style()
-    style.configure('Treeview', rowheight=int(fontheight))
-
-    return view
-
 class InsertButtonCallback:
     def __init__(self, func, ebox_list, window):
         self.func = func
@@ -171,6 +159,17 @@ class RemoveButtonCallback:
         self.conn.commit()
 
         self.refresh_func()
+
+class UpdateMenuCallback:
+    def __init__(self, set_label, label, set_id, id):
+        self.set_label = set_label
+        self.label = label
+        self.set_id = set_id
+        self.id = id
+
+    def __call__(self):
+        self.set_label(self.label)
+        self.set_id(self.id)
 
 class DbFrame(tk.Frame):
     def __init__(self, master, conn, table_name):
@@ -282,6 +281,12 @@ class EntityFrame(DbFrame):
 
 class EnrollmentFrame(DbFrame):
     def __init__(self, master, conn):
+        self.INVALID_TERM_STR = 'Select Term'
+        self.INVALID_COURSE_STR = 'Select Course'
+        self.INVALID_ID = -1
+        self.term_str = tk.StringVar(value=self.INVALID_TERM_STR)
+        self.course_id = tk.IntVar(value = self.INVALID_ID)
+        self.course_str = tk.StringVar(value=self.INVALID_COURSE_STR)
         super().__init__(master, conn, 'enrollment')
 
     def layout(self):
@@ -290,22 +295,14 @@ class EnrollmentFrame(DbFrame):
         tk.Grid.columnconfigure(self, 1, weight=1)
 
         # Create drop-down to select term
-        self.term_var = tk.StringVar()
-        self.term_var.set('Select Term')
-        self.term_var.trace('w', self.update_course_menu)
-        self.term_list = []
-
-        self.term_menu = tk.OptionMenu(self, self.term_var, tuple(self.term_list))
+        self.term_str.trace('w', self.update_course_menu)
+        self.term_menu = tk.OptionMenu(self, self.term_str, None)
         self.term_menu.grid(column=0, row=0)
 
         # Create drop-down to select course
-        self.course_var = tk.StringVar()
-        self.course_var.set('Select Course')
-        self.course_id = None
-        self.course_var.trace('w', self.update_student_list)
-        self.course_list = []
-
-        self.course_menu = tk.OptionMenu(self, self.course_var, tuple(self.course_list))
+        self.course_id.trace_add('write', self.update_student_list)
+        # self.course_str.trace('w', self.update_student_list)
+        self.course_menu = tk.OptionMenu(self, self.course_str, None)
         self.course_menu.grid(column=1, row=0)
 
         # Create tree view to show students enrolled
@@ -341,8 +338,8 @@ class EnrollmentFrame(DbFrame):
 
         entry = tk.Entry(win)
         entry.grid(row=0, column=1, columnspan=2, padx=5, pady=5, sticky=tk.EW)
-        if self.term_var.get() != 'Select Term':
-            entry.insert(0, self.term_var.get())
+        if self.term_str.get() != self.INVALID_TERM_STR:
+            entry.insert(0, self.term_str.get())
 
         # entry_boxes = []
         h = entry.winfo_reqheight()
@@ -351,141 +348,135 @@ class EnrollmentFrame(DbFrame):
         label.grid(row=1, column=0, padx=5, pady=5)
 
         # Create drop-down to select course
-        course_var = tk.StringVar()
-        course_var.set(self.course_var.get())
-        course_id = tk.IntVar(value=self.course_id)
+        course_var = tk.StringVar(value=self.course_str.get())
+        course_id = tk.IntVar(value=self.course_id.get())
 
-        with self.conn.cursor() as cur:
-            get_all_courses = '''
-                SELECT id, course_name FROM courses
-                '''
-            cur.execute(get_all_courses)
-
-        courses = cur.fetchall()
-        course_menu = tk.OptionMenu(win, course_var, [])
+        course_menu = self.build_option_menu(self.conn, ['id', 'course_name'], 'courses', win, course_var, course_id)
         course_menu.grid(column=1, row=1, columnspan=2, padx=5, pady=5, sticky=tk.EW)
-
-        class UpdateMenuCallback:
-            def __init__(self, set_label, label, set_id, id):
-                self.set_label = set_label
-                self.label = label
-                self.set_id = set_id
-                self.id = id
-
-            def __call__(self):
-                self.set_label(self.label)
-                self.set_id(self.id)
-
-        menu = course_menu['menu']
-        menu.delete(0, 'end')
-
-        for course in courses:
-            l = f'{course[1]}'
-            i = course[0]
-            menu.add_command(label=l,
-                             command=UpdateMenuCallback(course_var.set, l, course_id.set, i))
-
 
         label = tk.Label(win, text='Student:')
         label.grid(row=2, column=0, padx=5, pady=5)
 
         # Create drop-down to select student
-        student_var = tk.StringVar()
-        student_var.set('Select Student')
-        student_id = tk.IntVar()
+        student_var = tk.StringVar(value='Select Student')
+        student_id = tk.IntVar(value=self.INVALID_ID)
 
-        with self.conn.cursor() as cur:
-            get_all_students = '''
-                SELECT id, name from students
-            '''
-
-            cur.execute(get_all_students)
-
-        student_menu = tk.OptionMenu(win, student_var, tuple())
+        student_menu = self.build_option_menu(self.conn, ['id', 'name'], 'students', win, student_var, student_id)
         student_menu.grid(column=1, row=2, columnspan=2, padx=5, pady=5, sticky=tk.EW)
-
-        menu = student_menu['menu']
-        menu.delete(0, 'end')
-
-        for student in cur.fetchall():
-            l = f'{student[1]}'
-            i = student[0]
-            menu.add_command(label=l,
-                             command=UpdateMenuCallback(student_var.set, l, student_id.set, i))
 
         cancel_button = tk.Button(win, text='Cancel', command=win.destroy)
         cancel_button.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=(h, 0))
 
-        data = [entry, course_var, course_id, student_var, student_id]
+        data = [entry, course_id, student_id]
 
         add_action = InsertButtonCallback(self.add, data, win)
         action_button = tk.Button(win, text='Add', command=add_action)
         action_button.grid(row=3, column=2, sticky=tk.EW, padx=5, pady=(h, 0))
 
+    def build_option_menu(self, conn, attrs, table, win, str_var, id_var):
+        with conn.cursor() as cur:
+            get_data = f'''
+                SELECT {','.join(a for a in attrs)} FROM {table}
+                '''
+
+            cur.execute(get_data)
+
+        data = cur.fetchall()
+        option_menu = tk.OptionMenu(win, str_var, [])
+
+        menu = option_menu['menu']
+        menu.delete(0, 'end')
+
+        for item in data:
+            label = f'{item[1]}'
+            id = item[0]
+            menu.add_command(label=label,
+                             command=UpdateMenuCallback(str_var.set,
+                                                        label,
+                                                        id_var.set,
+                                                        id))
+
+        return option_menu
+
     def add(self, data):
-        if data[0] == '' or data[1] == 'Select Course' or data[3] == 'Select Student':
+        if data[0] == '' or data[1] == self.INVALID_ID or data[2] == self.INVALID_ID:
             return False
 
+        success = True
         with self.conn.cursor() as cur:
             insert_sql = f'''INSERT INTO enrollment_data (term, course_id, student_id) VALUES
-                ('{data[0]}',{data[2]},{data[4]})
+                ('{data[0]}',{data[1]},{data[2]})
             '''
-
-            cur.execute(insert_sql)
+            try:
+                cur.execute(insert_sql)
+            except pymysql.IntegrityError as e:
+                messagebox.showinfo("Error", "Cannot insert! Likely due to duplicate")
+                success = False
 
         self.conn.commit()
 
         self.refresh()
 
-        return True
+        return success
 
     def update_term_menu(self):
         with self.conn.cursor() as cur:
             get_terms = '''SELECT DISTINCT(term) from enrollment'''
             cur.execute(get_terms)
 
-            self.term_list = [term[0] for term in cur.fetchall()]
+            term_list = [term[0] for term in cur.fetchall()]
 
         # Clear out existing menu items & fill with list
         menu = self.term_menu['menu']
         menu.delete(0, 'end')
-        for term in self.term_list:
+        for term in term_list:
             menu.add_command(label=term,
-                             command=lambda value=term: self.term_var.set(value))
+                             command=lambda value=term: self.term_str.set(value))
+
+        if self.term_str.get() not in term_list:
+            self.term_str.set(self.INVALID_TERM_STR)
 
     def update_course_menu(self, *args):
+        if self.term_str.get() == self.INVALID_TERM_STR:
+            self.course_id.set(self.INVALID_ID)
+            self.course_str.set(self.INVALID_COURSE_STR)
+            return
+
         # Get course list for a given term
         with self.conn.cursor() as cur:
             get_courses = f'''SELECT DISTINCT c_name, c_id FROM enrollment
-                                WHERE term="{self.term_var.get()}"'''
+                                WHERE term="{self.term_str.get()}"'''
 
             cur.execute(get_courses)
+
+            course_data = cur.fetchall()
 
         # Replace menu
         menu = self.course_menu['menu']
         menu.delete(0, 'end')
-        for course in cur.fetchall():
+        for course in course_data:
             l = f'{course[0]}'
             i = course[1]
             menu.add_command(label=l,
-                             command=lambda i=i, l=l: self.update_course(i, l))
+                             command=UpdateMenuCallback(self.course_str.set, l,
+                                                        self.course_id.set, i))
 
-    def update_course(self, id, name):
-        self.course_id = id
-        self.course_var.set(name)
+        if self.course_id.get() not in [course[1] for course in course_data]:
+            self.course_id.set(self.INVALID_ID)
+            self.course_str.set(self.INVALID_COURSE_STR)
 
     def update_student_list(self, *args):
         # Clear everything out of tree
         self.tree_view.delete(*self.tree_view.get_children())
 
-        if self.course_var.get() == 'Select Course':
+        if self.course_str.get() == self.INVALID_COURSE_STR:
             return
 
         # Get list of students
         with self.conn.cursor() as cur:
             get_students = f'''SELECT id,s_name FROM enrollment
-                                WHERE term="{self.term_var.get()}"
-                                AND c_id={self.course_id}'''
+                                WHERE term="{self.term_str.get()}"
+                                AND c_id={self.course_id.get()}'''
 
             cur.execute(get_students)
 
@@ -494,6 +485,7 @@ class EnrollmentFrame(DbFrame):
 
     def refresh(self):
         self.update_term_menu()
+        self.update_course_menu()
         self.update_student_list()
 
 class App:
