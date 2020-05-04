@@ -465,8 +465,11 @@ class App:
         style = ttk.Style()
         style.configure('Treeview', rowheight=int(fontheight))
 
-        self.tabs = ttk.Notebook(self.master)
+        self.menubar = self.create_menubar()
+        self.master.configure(menu=self.menubar)
 
+
+        self.tabs = ttk.Notebook(self.master)
 
         # Create Entity tabs
         self.student_frame = EntityFrame(self.tabs, self.db, 'students')
@@ -489,6 +492,21 @@ class App:
 
     def __del__(self):
         del self.db
+
+    def create_menubar(self):
+        menubar = tk.Menu(self.master)
+
+        filemenu = tk.Menu(menubar, tearoff=0)
+        filemenu.add_command(label='Insert Test Data', command=self.db.insert_test_data)
+        filemenu.add_separator()
+        filemenu.add_command(label='Exit', command=self.master.quit)
+
+        menubar.add_cascade(label='File', menu=filemenu)
+
+        return menubar
+
+    def push_message_box(self, message):
+        messagebox.showinfo("Error", message)
 
 if __name__ == '__main__':
     form = tk.Tk()
