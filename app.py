@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import warnings
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk
@@ -10,6 +9,8 @@ import tkcalendar as tkc
 import pymysql.cursors
 
 __author__ = 'Colin Leary'
+
+import db
 
 # Create a list of the tables & their attributes to be used when the UI interacts with the database
 tables = {
@@ -27,97 +28,6 @@ tables = {
     },
 }
 
-def create_entity_tables(conn):
-    create_student_table = '''
-        CREATE TABLE IF NOT EXISTS students (
-            id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
-            name VARCHAR(30) NOT NULL
-            )
-        '''
-
-    create_assignment_table = '''
-        CREATE TABLE IF NOT EXISTS assignments (
-            id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
-            name VARCHAR(30) NOT NULL
-            )
-        '''
-
-    create_course_table = '''
-        CREATE TABLE IF NOT EXISTS courses (
-            id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
-            course_name VARCHAR(30) NOT NULL,
-            instructor_name VARCHAR(30) NOT NULL
-            )
-        '''
-
-    with conn.cursor() as cursor:
-        warnings.filterwarnings('ignore')
-        cursor.execute(create_student_table)
-        cursor.execute(create_assignment_table)
-        cursor.execute(create_course_table)
-        warnings.filterwarnings('default')
-
-    conn.commit()
-
-def create_relationship_tables(conn):
-    create_enrollment_table = '''
-        CREATE TABLE IF NOT EXISTS enrollment_data (
-            id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
-            student_id INT UNSIGNED NOT NULL REFERENCES student(id),
-            course_id INT UNSIGNED NOT NULL REFERENCES course(id),
-            term VARCHAR(30) NOT NULL,
-            CONSTRAINT UNIQUE (student_id, course_id, term)
-            )
-        '''
-
-    create_enrollment_view = '''
-        CREATE OR REPLACE VIEW
-            enrollment
-        AS SELECT
-            e.id,
-            e.term,
-            e.course_id c_id,
-            c.course_name c_name,
-            e.student_id s_id,
-            s.name s_name
-        FROM
-            enrollment_data e
-        INNER JOIN
-            courses c
-        ON
-            e.course_id = c.id
-        INNER JOIN
-            students s
-        ON
-            e.student_id = s.id
-        '''
-
-    create_attendance_table = '''
-        CREATE TABLE IF NOT EXISTS attendance (
-            enrollment_id INT UNSIGNED NOT NULL REFERENCES enrollment(id),
-            date DATE NOT NULL,
-            CONSTRAINT UNIQUE (enrollment_id, date)
-            )
-        '''
-
-    create_grade_table = '''
-        CREATE TABLE IF NOT EXISTS grades (
-            assignment_id INT UNSIGNED NOT NULL REFERENCES assignment(id),
-            enrollment_id INT UNSIGNED NOT NULL REFERENCES enrollment(id),
-            score INT
-        )
-    '''
-
-    with conn.cursor() as cursor:
-        warnings.filterwarnings('ignore')
-        cursor.execute(create_enrollment_table)
-        cursor.execute(create_enrollment_view)
-        cursor.execute(create_attendance_table)
-        cursor.execute(create_grade_table)
-        warnings.filterwarnings('default')
-
-    conn.commit()
-
 class InsertButtonCallback:
     def __init__(self, func, ebox_list, window):
         self.func = func
@@ -131,23 +41,16 @@ class InsertButtonCallback:
             self.window.destroy()
 
 class RemoveButtonCallback:
-    def __init__(self, conn, table_name, tree_view, refresh_func):
-        self.conn = conn
+    def __init__(self, db, table_name, tree_view, refresh_func):
+        self.db = db
         self.table_name = table_name
         self.tree_view = tree_view
         self.refresh_func = refresh_func
 
     def __call__(self):
-        remove_sql = f'''
-            DELETE FROM {self.table_name} WHERE id=%s
-        '''
-
-        with self.conn.cursor() as cur:
-            for id in self.tree_view.selection():
-                cur.execute(remove_sql, id)
-
-        self.conn.commit()
-
+        ids = ','.join(i for i in self.tree_view.selection())
+        self.db.remove(self.table_name,
+                       f'id in ({ids})')
         self.refresh_func()
 
 class UpdateMenuCallback:
@@ -162,10 +65,10 @@ class UpdateMenuCallback:
         self.set_id(self.id)
 
 class DbFrame(tk.Frame):
-    def __init__(self, master, conn, table_name):
+    def __init__(self, master, db, table_name):
         self.master = master
         self.table_name = table_name
-        self.conn = conn
+        self.db = db
         super().__init__(master)
 
         self.layout()
@@ -178,10 +81,10 @@ class DbFrame(tk.Frame):
         pass
 
 class EntityFrame(DbFrame):
-    def __init__(self, master, conn, table_name):
+    def __init__(self, master, db, table_name):
         self.attr_list = tables[table_name]['attrs']
         self.titles = tables[table_name]['titles']
-        super().__init__(master, conn, table_name)
+        super().__init__(master, db, table_name)
 
     def layout(self):
         tk.Grid.rowconfigure(self, 0, weight=1)
@@ -190,7 +93,7 @@ class EntityFrame(DbFrame):
 
         self.tree_view = ttk.Treeview(self, columns=self.titles, show='headings')
 
-        self.remove = RemoveButtonCallback(self.conn,
+        self.remove = RemoveButtonCallback(self.db,
                                            self.table_name,
                                            self.tree_view,
                                            self.refresh)
@@ -209,18 +112,14 @@ class EntityFrame(DbFrame):
         add_button.grid(row=1, column=1, sticky=tk.NSEW)
 
     def refresh(self):
-        get_all = f'''
-            SELECT {'id,'+','.join(self.attr_list)} FROM {self.table_name}
-        '''
+        attrs = 'id,'+','.join(self.attr_list)
 
         # Clear out the tree so we can add everything back in
         self.tree_view.delete(*self.tree_view.get_children())
 
-        with self.conn.cursor() as cur:
-            cur.execute(get_all)
-            res = cur.fetchall()
-            for item in res:
-                self.tree_view.insert('', 'end', item[0], values=item[1:])
+        items = self.db.get(self.table_name, attrs)
+        for item in items:
+            self.tree_view.insert('', 'end', item[0], values=item[1:])
 
     def push_add_window(self):
         win = tk.Toplevel()
@@ -254,30 +153,23 @@ class EntityFrame(DbFrame):
 
     def add(self, entries):
         a = ','.join(s for s in self.attr_list)
-        e = ','.join(f'"{s}"' for s in entries)
+        e = ','.join(f'("{s}")' for s in entries)
 
-        insert_sql = f'''
-            INSERT INTO {self.table_name} ({a}) VALUES ({e})
-        '''
-
-        with self.conn.cursor() as cur:
-            cur.execute(insert_sql)
-
-        self.conn.commit()
+        self.db.insert(self.table_name, a, e)
 
         self.refresh()
 
         return True
 
 class EnrollmentFrame(DbFrame):
-    def __init__(self, master, conn):
+    def __init__(self, master, db):
         self.INVALID_TERM_STR = 'Select Term'
         self.INVALID_COURSE_STR = 'Select Course'
         self.INVALID_ID = -1
         self.term_str = tk.StringVar(value=self.INVALID_TERM_STR)
         self.course_id = tk.IntVar(value = self.INVALID_ID)
         self.course_str = tk.StringVar(value=self.INVALID_COURSE_STR)
-        super().__init__(master, conn, 'enrollment')
+        super().__init__(master, db, 'enrollment')
 
     def layout(self):
         tk.Grid.rowconfigure(self, 1, weight=1)
@@ -303,7 +195,7 @@ class EnrollmentFrame(DbFrame):
                                columnspan=2,
                                sticky=tk.NSEW)
 
-        self.remove = RemoveButtonCallback(self.conn,
+        self.remove = RemoveButtonCallback(self.db,
                                            'enrollment_data',
                                            self.tree_view,
                                            self.refresh)
@@ -341,7 +233,7 @@ class EnrollmentFrame(DbFrame):
         course_var = tk.StringVar(value=self.course_str.get())
         course_id = tk.IntVar(value=self.course_id.get())
 
-        course_menu = self.build_option_menu(self.conn, ['id', 'course_name'], 'courses', win, course_var, course_id)
+        course_menu = self.build_option_menu(self.db, ['id', 'course_name'], 'courses', win, course_var, course_id)
         course_menu.grid(column=1, row=1, columnspan=2, padx=5, pady=5, sticky=tk.EW)
 
         label = tk.Label(win, text='Student:')
@@ -351,7 +243,7 @@ class EnrollmentFrame(DbFrame):
         student_var = tk.StringVar(value='Select Student')
         student_id = tk.IntVar(value=self.INVALID_ID)
 
-        student_menu = self.build_option_menu(self.conn, ['id', 'name'], 'students', win, student_var, student_id)
+        student_menu = self.build_option_menu(self.db, ['id', 'name'], 'students', win, student_var, student_id)
         student_menu.grid(column=1, row=2, columnspan=2, padx=5, pady=5, sticky=tk.EW)
 
         cancel_button = tk.Button(win, text='Cancel', command=win.destroy)
@@ -363,15 +255,10 @@ class EnrollmentFrame(DbFrame):
         action_button = tk.Button(win, text='Add', command=add_action)
         action_button.grid(row=3, column=2, sticky=tk.EW, padx=5, pady=(h, 0))
 
-    def build_option_menu(self, conn, attrs, table, win, str_var, id_var):
-        with conn.cursor() as cur:
-            get_data = f'''
-                SELECT {','.join(a for a in attrs)} FROM {table}
-                '''
+    def build_option_menu(self, db, attr_list, table, win, str_var, id_var):
+        attrs = ','.join(a for a in attr_list)
 
-            cur.execute(get_data)
-
-        data = cur.fetchall()
+        data = db.get(table, attrs)
         option_menu = tk.OptionMenu(win, str_var, [])
 
         menu = option_menu['menu']
@@ -392,29 +279,18 @@ class EnrollmentFrame(DbFrame):
         if data[0] == '' or data[1] == self.INVALID_ID or data[2] == self.INVALID_ID:
             return False
 
-        success = True
-        with self.conn.cursor() as cur:
-            insert_sql = f'''INSERT INTO enrollment_data (term, course_id, student_id) VALUES
-                ('{data[0]}',{data[1]},{data[2]})
-            '''
-            try:
-                cur.execute(insert_sql)
-            except pymysql.IntegrityError as e:
-                messagebox.showinfo("Error", "Cannot insert! Likely due to duplicate")
-                success = False
-
-        self.conn.commit()
+        success = self.db.insert('enrollment_data',
+                                'term, course_id, student_id',
+                                f'("{data[0]}", {data[1]}, {data[2]})')
 
         self.refresh()
 
         return success
 
     def update_term_menu(self):
-        with self.conn.cursor() as cur:
-            get_terms = '''SELECT DISTINCT(term) from enrollment'''
-            cur.execute(get_terms)
+        terms = self.db.get('enrollment', 'DISTINCT(term)')
 
-            term_list = [term[0] for term in cur.fetchall()]
+        term_list = [term[0] for term in terms]
 
         # Clear out existing menu items & fill with list
         menu = self.term_menu['menu']
@@ -432,14 +308,9 @@ class EnrollmentFrame(DbFrame):
             self.course_str.set(self.INVALID_COURSE_STR)
             return
 
-        # Get course list for a given term
-        with self.conn.cursor() as cur:
-            get_courses = f'''SELECT DISTINCT c_name, c_id FROM enrollment
-                                WHERE term="{self.term_str.get()}"'''
-
-            cur.execute(get_courses)
-
-            course_data = cur.fetchall()
+        course_data = self.db.get('enrollment',
+                                  'DISTINCT c_name, c_id',
+                                  where=f'term="{self.term_str.get()}"')
 
         # Replace menu
         menu = self.course_menu['menu']
@@ -462,16 +333,14 @@ class EnrollmentFrame(DbFrame):
         if self.course_str.get() == self.INVALID_COURSE_STR:
             return
 
-        # Get list of students
-        with self.conn.cursor() as cur:
-            get_students = f'''SELECT id,s_name FROM enrollment
-                                WHERE term="{self.term_str.get()}"
-                                AND c_id={self.course_id.get()}'''
+        where_clause = f'term="{self.term_str.get()}" AND c_id={self.course_id.get()}'
 
-            cur.execute(get_students)
+        students = self.db.get('enrollment',
+                               'id, s_name',
+                               where=where_clause)
 
-            for student in cur.fetchall():
-                self.tree_view.insert('', 'end', student[0], values=f'"{student[1]}"')
+        for student in students:
+            self.tree_view.insert('', 'end', student[0], values=f'"{student[1]}"')
 
     def refresh(self):
         self.update_term_menu()
@@ -480,8 +349,8 @@ class EnrollmentFrame(DbFrame):
 
 # The attendance frame is almost identical to the enrollment frame
 class AttendanceFrame(EnrollmentFrame):
-    def __init__(self, master, conn):
-        super().__init__(master, conn)
+    def __init__(self, master, db):
+        super().__init__(master, db)
 
     def layout(self):
         tk.Grid.rowconfigure(self, 1, weight=1)
@@ -520,32 +389,19 @@ class AttendanceFrame(EnrollmentFrame):
         present_button.grid(row=2, column=3, columnspan=3, sticky=tk.NSEW)
 
     def mark_not_present(self):
-        remove_attendance_sql = f'''DELETE FROM attendance
-            WHERE enrollment_id = %s
-            AND date = "{self.date}"'''
-
-        with self.conn.cursor() as cur:
-            for s in self.tree_view.selection():
-                cur.execute(remove_attendance_sql, s)
-
-        self.conn.commit()
+        ids = ','.join(i for i in self.tree_view.selection())
+        where_clause = f'date = "{self.date}" AND enrollment_id in ({ids})'
+        self.db.remove('attendance',
+                       where_clause)
 
         self.refresh()
 
     def mark_present(self):
-        add_attendance_sql = f'''INSERT INTO attendance
-            (enrollment_id, date) VALUES
-            (%s, "{self.date}")
-        '''
-
-        with self.conn.cursor() as cur:
-            for s in self.tree_view.selection():
-                try:
-                    cur.execute(add_attendance_sql, s)
-                except pymysql.IntegrityError:
-                    pass
-
-        self.conn.commit()
+        values = ','.join(f'({id},"{self.date}")' for id in self.tree_view.selection())
+        self.db.insert('attendance',
+                       'enrollment_id, date',
+                       values,
+                       ignore_duplicates=True)
 
         self.refresh()
 
@@ -561,38 +417,31 @@ class AttendanceFrame(EnrollmentFrame):
             return
 
         # Get attendance
-        with self.conn.cursor() as cur:
-            get_attendance = f'''SELECT enrollment_id FROM attendance
-                                WHERE date="{self.date}"'''
+        present = self.db.get('attendance',
+                              'enrollment_id',
+                              where=f'date="{self.date}"')
 
-            cur.execute(get_attendance)
-
-            present = [i[0] for i in cur.fetchall()]
+        present = [i[0] for i in present]
 
         # Get list of students
-        with self.conn.cursor() as cur:
+        where_clause = f'term="{self.term_str.get()}" AND c_id={self.course_id.get()}'
+        students = self.db.get('enrollment',
+                               'id, s_name',
+                               where=where_clause)
 
-            get_students = f'''SELECT id,s_name FROM enrollment
-                                WHERE term="{self.term_str.get()}"
-                                AND c_id={self.course_id.get()}'''
+        for student in students:
+            v = [f'{student[1]}']
+            if student[0] in present:
+                v.append('X')
 
-            cur.execute(get_students)
-
-            for student in cur.fetchall():
-                v = [f'{student[1]}']
-                if student[0] in present:
-                    v.append('X')
-
-                self.tree_view.insert('', 'end', student[0], values=v)
+            self.tree_view.insert('', 'end', student[0], values=v)
 
 class App:
     def __init__(self, master):
         # Create connection
         self.master = master
 
-        self.conn = pymysql.connect(host='localhost',
-                                    user='python',
-                                    db='sie5572020')
+        self.db = db.Database(self.push_message_box)
 
         master.title('SIE557 Project')
 
@@ -610,10 +459,6 @@ class App:
 
         master.geometry(f'{w}x{h}+{x}+{y}')
 
-        # Make sure tables exists
-        create_entity_tables(self.conn)
-        create_relationship_tables(self.conn)
-
         fname = ttk.Style().lookup('TreeView', 'font')
         fontheight = tkf.Font(name=fname, exists=tk.TRUE).metrics('linespace')
 
@@ -622,29 +467,28 @@ class App:
 
         self.tabs = ttk.Notebook(self.master)
 
-        self.attentance_frame = AttendanceFrame(self.tabs, self.conn)
-        self.tabs.add(self.attentance_frame, text='Attendance')
 
         # Create Entity tabs
-        self.student_frame = EntityFrame(self.tabs, self.conn, 'students')
+        self.student_frame = EntityFrame(self.tabs, self.db, 'students')
         self.tabs.add(self.student_frame, text='Students')
 
-        self.course_frame = EntityFrame(self.tabs, self.conn, 'courses')
+        self.course_frame = EntityFrame(self.tabs, self.db, 'courses')
         self.tabs.add(self.course_frame, text='Courses')
 
-        self.assignment_frame = EntityFrame(self.tabs, self.conn, 'assignments')
+        self.assignment_frame = EntityFrame(self.tabs, self.db, 'assignments')
         self.tabs.add(self.assignment_frame, text='Assignments')
 
         # Create Relationship tabs
-        self.enrollment_frame = EnrollmentFrame(self.tabs, self.conn)
+        self.enrollment_frame = EnrollmentFrame(self.tabs, self.db)
         self.tabs.add(self.enrollment_frame, text='Enrollment')
 
-
+        self.attentance_frame = AttendanceFrame(self.tabs, self.db)
+        self.tabs.add(self.attentance_frame, text='Attendance')
 
         self.tabs.pack(fill=tk.BOTH, expand=tk.TRUE)
 
     def __del__(self):
-        self.conn.close()
+        del self.db
 
 if __name__ == '__main__':
     form = tk.Tk()
