@@ -2,6 +2,7 @@
 
 import warnings
 import pymysql.cursors
+import random
 
 __author__ = 'Colin Leary'
 
@@ -94,7 +95,8 @@ class Database:
         create_student_table = '''
             CREATE TABLE IF NOT EXISTS students (
                 id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
-                name VARCHAR(30) NOT NULL
+                name VARCHAR(30) NOT NULL,
+                CONSTRAINT UNIQUE (name)
                 )
             '''
 
@@ -109,7 +111,8 @@ class Database:
             CREATE TABLE IF NOT EXISTS courses (
                 id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
                 course_name VARCHAR(30) NOT NULL,
-                instructor_name VARCHAR(30) NOT NULL
+                instructor_name VARCHAR(30) NOT NULL,
+                CONSTRAINT UNIQUE (course_name,instructor_name)
                 )
             '''
 
@@ -175,7 +178,116 @@ class Database:
         self.conn.commit()
 
     def insert_test_data(self):
-        pass
+        students = [
+            ('Fariha Quinn'),
+            ('Giovanni Hagan'),
+            ('Lyla-Rose Wyatt'),
+            ('Nolan Knights'),
+            ('Aarush Mullen'),
+            ('Akeel Mccarty'),
+            ('Riaan Mason'),
+            ('Cain Nichols'),
+            ('Caitlyn Horn'),
+            ('Luc Park')
+        ]
+
+        insert_students = f'''
+            INSERT INTO students (name) VALUES {','.join(f'("{s}")' for s in students)}
+        '''
+
+        courses = [
+            ('Acacia Bob', 'Alien Bioengineering'),
+            ('Shyla Molloy', 'Planetary Biology'),
+            ('Lorena Archer', 'Life Gardening'),
+            ('Carys Joyce', 'Foreign Drama'),
+            ('Gurveer Hicks', 'Alien Mathematics'),
+            ('Susie Adams', 'Alien Ethics'),
+            ('Henry Mcnamara', 'Extinct Language Literature'),
+            ('Henrietta Person', 'Alien Biology'),
+            ('Krista Miranda', 'Alien Tactics and Strategy'),
+            ('Tasnia Avery', 'Ward Casting')
+        ]
+
+        insert_courses = f'''
+            INSERT INTO courses
+                (instructor_name, course_name)
+            VALUES
+                {','.join(f'{s}' for s in courses)}
+        '''
+
+        insert_assignments = f'''
+            INSERT INTO assignments
+                (name)
+            VALUES
+                {','.join(f'("Homework {i+1}")' for i in range(10))}
+        '''
+
+        with self.conn.cursor() as cur:
+            try:
+                cur.execute(insert_students)
+            except:
+                pass
+
+            try:
+                cur.execute(insert_courses)
+            except:
+                pass
+
+            try:
+                cur.execute(insert_assignments)
+            except:
+                pass
+
+        self.conn.commit()
+
+        student_ids = []
+        course_ids = []
+        with self.conn.cursor() as cur:
+            try:
+                cur.execute('SELECT id FROM students')
+                student_ids = [id[0] for id in cur.fetchall()]
+            except:
+                pass
+
+            try:
+                cur.execute('SELECT id FROM courses')
+                course_ids = [id[0] for id in cur.fetchall()]
+            except:
+                pass
+
+        terms = [
+            ('Spring 2020'),
+            ('Fall 2019'),
+            ('Spring 2019'),
+            ('Fall 2018'),
+            ('Spring 2018'),
+            ('Fall 2017')
+        ]
+
+        values = []
+        for term in terms:
+            n = random.randint(0, len(course_ids))
+            c_ids = random.sample(course_ids, n)
+            for c_id in c_ids:
+                m = random.randint(0, len(student_ids))
+                s_ids = random.sample(student_ids, m)
+                for s_id in s_ids:
+                    values.append((term,c_id,s_id))
+
+        with self.conn.cursor() as cur:
+            insert_enrollment = '''
+                INSERT INTO enrollment_data
+                    (term, course_id, student_id)
+                VALUES
+                    (%s, %s, %s)
+            '''
+
+            try:
+                cur.executemany(insert_enrollment, values)
+            except:
+                pass
+
+        self.conn.commit()
 
 if __name__ == '__main__':
     # This module is not callable

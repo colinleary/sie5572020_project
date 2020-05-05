@@ -497,13 +497,24 @@ class App:
         menubar = tk.Menu(self.master)
 
         filemenu = tk.Menu(menubar, tearoff=0)
-        filemenu.add_command(label='Insert Test Data', command=self.db.insert_test_data)
+        filemenu.add_command(label='Insert Test Data', command=self.insert_test_data)
         filemenu.add_separator()
         filemenu.add_command(label='Exit', command=self.master.quit)
 
         menubar.add_cascade(label='File', menu=filemenu)
 
         return menubar
+
+    def insert_test_data(self):
+        self.db.insert_test_data()
+        self.refresh()
+
+    def refresh(self):
+        self.student_frame.refresh()
+        self.course_frame.refresh()
+        self.assignment_frame.refresh()
+        self.enrollment_frame.refresh()
+        self.attendance_frame.refresh()
 
     def push_message_box(self, message):
         messagebox.showinfo("Error", message)
