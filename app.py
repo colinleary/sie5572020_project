@@ -6,8 +6,6 @@ from tkinter import ttk
 from tkinter import messagebox
 import tkcalendar as tkc
 
-import pymysql.cursors
-
 __author__ = 'Colin Leary'
 
 import db
@@ -485,8 +483,8 @@ class App:
         self.enrollment_frame = EnrollmentFrame(self.tabs, self.db)
         self.tabs.add(self.enrollment_frame, text='Enrollment')
 
-        self.attentance_frame = AttendanceFrame(self.tabs, self.db)
-        self.tabs.add(self.attentance_frame, text='Attendance')
+        self.attendance_frame = AttendanceFrame(self.tabs, self.db)
+        self.tabs.add(self.attendance_frame, text='Attendance')
 
         self.tabs.pack(fill=tk.BOTH, expand=tk.TRUE)
 

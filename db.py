@@ -103,7 +103,8 @@ class Database:
         create_assignment_table = '''
             CREATE TABLE IF NOT EXISTS assignments (
                 id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
-                name VARCHAR(30) NOT NULL
+                name VARCHAR(30) NOT NULL,
+                CONSTRAINT UNIQUE (name)
                 )
             '''
 
